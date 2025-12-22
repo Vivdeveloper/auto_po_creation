@@ -247,3 +247,14 @@ app_license = "mit"
 doctype_js = {
     "Material Request": "public/js/material_request.js"
 }
+
+
+
+doc_events = {
+    "Purchase Order": {
+        "validate": "auto_po_creation.po_tax_fix.apply_purchase_taxes"
+    }
+}
+
+
+
