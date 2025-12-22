@@ -197,39 +197,31 @@
 
 
 
-
-
 frappe.ui.form.on('Material Request', {
     refresh(frm) {
+        // Only on submitted MR
         if (frm.doc.__islocal || frm.doc.docstatus !== 1) return;
 
         frm.add_custom_button(__('Auto Create PO'), () => {
-
-            // ----------------------------------------
-            // FETCH ITEMS WHICH ALREADY HAVE PO
-            // ----------------------------------------
             frappe.call({
                 method: 'auto_po_creation.api.get_po_status',
                 args: { material_request: frm.doc.name },
                 callback(r) {
-
                     const po_items = r.message || [];
-                    let table_data = [];
-                    let missing_supplier = [];
+                    const table_data = [];
+                    const missing_supplier = [];
 
-                    // ----------------------------------------
-                    // PREPARE TABLE DATA
-                    // ----------------------------------------
-                    frm.doc.items.forEach(row => {
-
-                        // Updated: use your new field name first
+                    // Build table rows
+                    (frm.doc.items || []).forEach(row => {
+                        // Always pick custom supplier first
                         const supplier =
-                            row.custom_supplier_ ||  // <-- your custom field
+                            row.custom_supplier_ ||      // custom field on MR Item
                             row.supplier ||
                             row.supplier_code ||
                             row.default_supplier;
 
                         if (!supplier) {
+                            // Will trigger the “Supplier Missing” popup
                             missing_supplier.push(row.item_code);
                             return;
                         }
@@ -258,9 +250,7 @@ frappe.ui.form.on('Material Request', {
                         return;
                     }
 
-                    // ----------------------------------------
-                    // POPUP DIALOG
-                    // ----------------------------------------
+                    // Dialog with items
                     const dialog = new frappe.ui.Dialog({
                         title: __('Select Items for PO'),
                         size: 'extra-large',
@@ -313,10 +303,6 @@ frappe.ui.form.on('Material Request', {
                         ],
                         primary_action_label: __('Create PO'),
                         primary_action() {
-
-                            // ----------------------------------------
-                            // GET SELECTED ROWS (DEFAULT CHECKBOX)
-                            // ----------------------------------------
                             const selected_items = dialog.fields_dict.items.grid
                                 .get_selected_children()
                                 .filter(row => !row._po_created);
@@ -343,7 +329,7 @@ frappe.ui.form.on('Material Request', {
 
                                     let msg = `<b>PO created for following items:</b><br><br>`;
 
-                                    res.message.created.forEach(po => {
+                                    (res.message.created || []).forEach(po => {
                                         msg += `
                                             <b>PO:</b>
                                             <a href="/app/purchase-order/${po.name}">
@@ -366,15 +352,11 @@ frappe.ui.form.on('Material Request', {
                         }
                     });
 
-                    // ----------------------------------------
-                    // LOAD DATA
-                    // ----------------------------------------
+                    // Load data
                     dialog.fields_dict.items.df.data = table_data;
                     dialog.fields_dict.items.grid.refresh();
 
-                    // ----------------------------------------
-                    // DISABLE SELECTION FOR CREATED PO
-                    // ----------------------------------------
+                    // Disable checkboxes for rows that already have PO
                     setTimeout(() => {
                         dialog.fields_dict.items.grid.grid_rows.forEach(r => {
                             if (r.doc._po_created) {

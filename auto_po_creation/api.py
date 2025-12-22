@@ -137,21 +137,20 @@
 
 
 
-
-
 import frappe
 from collections import defaultdict
 import json
 
 
 def bypass_mr_permissions(doc, method=None):
-    """Bypass Material Request permission checks"""
+    """Bypass Material Request permission checks."""
     if frappe.session.user != "Administrator":
         frappe.flags.ignore_permissions = True
 
 
 @frappe.whitelist()
 def get_po_status(material_request):
+    """Return item codes from existing PO Items for this MR."""
     po_items = frappe.get_all(
         "Purchase Order Item",
         filters={"material_request": material_request},
@@ -162,37 +161,36 @@ def get_po_status(material_request):
 
 @frappe.whitelist()
 def get_item_suppliers(item_code):
-    """Fetch allowed suppliers for an item"""
+    """Fetch allowed suppliers for an item (handles variants)."""
     try:
         suppliers = []
-        
-        # Check direct suppliers
+
         item = frappe.get_doc("Item", item_code)
-        if item.supplier_items:
-            for si in item.supplier_items:
-                if si.supplier:
-                    suppliers.append(si.supplier)
-        
-        # If no suppliers and item has variant code (contains '-')
+
+        # Direct suppliers on Item
+        for si in getattr(item, "supplier_items", []):
+            if si.supplier:
+                suppliers.append(si.supplier)
+
+        # If no suppliers and code looks like a variant (contains '-')
         if not suppliers and "-" in item_code:
             parent_code = item_code.split("-")[0]
             try:
                 parent_item = frappe.get_doc("Item", parent_code)
-                if parent_item.supplier_items:
-                    for si in parent_item.supplier_items:
-                        # updated field name here
-                        supplier_item_code = (
-                            getattr(si, "custom_supplier_", None)
-                            or si.supplier_part_no
-                        )
-                        if supplier_item_code == item_code and si.supplier:
-                            suppliers.append(si.supplier)
+                for si in getattr(parent_item, "supplier_items", []):
+                    # Prefer custom_supplier_ on Item Supplier row
+                    supplier_item_code = (
+                        getattr(si, "custom_supplier_", None)
+                        or si.supplier_part_no
+                    )
+                    if supplier_item_code == item_code and si.supplier:
+                        suppliers.append(si.supplier)
             except Exception:
+                # parent not found or other error – ignore
                 pass
-        
-        # Return unique suppliers
+
         return list(set(suppliers))
-    
+
     except Exception:
         frappe.log_error(frappe.get_traceback(), "Get Item Suppliers Error")
         return []
@@ -200,12 +198,12 @@ def get_item_suppliers(item_code):
 
 @frappe.whitelist()
 def create_purchase_orders(material_request, items):
+    """Group MR items by supplier and create Purchase Orders."""
     try:
-        # Set session user to Administrator to bypass all permissions
+        # Ensure full rights for background-like operation
         frappe.set_user("Administrator")
-        
-        items = json.loads(items)
 
+        items = json.loads(items or "[]")
         created = []
         existing = []
         supplier_items_map = defaultdict(list)
@@ -219,42 +217,45 @@ def create_purchase_orders(material_request, items):
         company_abbr = company_doc.abbr
         company_state = company_doc.gstin[:2] if company_doc.gstin else None
 
-        # MAP ITEM -> WAREHOUSE
+        # Map item_code -> warehouse from MR
         mr_item_warehouse = {}
         for d in mr.items:
             if not d.warehouse:
                 frappe.throw(f"Warehouse missing for Item {d.item_code}")
             mr_item_warehouse[d.item_code] = d.warehouse
 
-        # GROUP ITEMS BY SUPPLIER
+        # Group items per supplier, skip ones already on a PO
         for item in items:
+            item_code = item["item_code"]
+            supplier = item["supplier"]
+
             existing_po = frappe.get_all(
                 "Purchase Order Item",
                 filters={
                     "material_request": material_request,
-                    "item_code": item["item_code"]
+                    "item_code": item_code
                 },
                 fields=["parent"]
             )
 
             if existing_po:
                 existing.append({
-                    "supplier": item["supplier"],
+                    "supplier": supplier,
                     "po_name": existing_po[0]["parent"]
                 })
                 continue
 
-            supplier_items_map[item["supplier"]].append({
-                "item_code": item["item_code"],
+            supplier_items_map[supplier].append({
+                "item_code": item_code,
                 "qty": item["qty"],
                 "uom": "Nos",
-                "warehouse": mr_item_warehouse[item["item_code"]],
+                "warehouse": mr_item_warehouse[item_code],
                 "schedule_date": frappe.utils.nowdate(),
                 "material_request": material_request,
                 "project": project
             })
 
-        # CREATE PURCHASE ORDERS
+        # Create one PO per supplier
         for supplier, items_list in supplier_items_map.items():
             supplier_doc = frappe.get_doc("Supplier", supplier)
             supplier_state = supplier_doc.gstin[:2] if supplier_doc.gstin else None
@@ -266,7 +267,6 @@ def create_purchase_orders(material_request, items):
                 else:
                     tax_template = f"Input GST Out-state - {company_abbr}"
 
-            # Create PO with ignore_permissions to avoid permission popup
             po = frappe.get_doc({
                 "doctype": "Purchase Order",
                 "supplier": supplier,
@@ -278,12 +278,9 @@ def create_purchase_orders(material_request, items):
                 "taxes_and_charges": tax_template
             })
 
-            # Insert with ignore_permissions and ignore_mandatory
             po.flags.ignore_permissions = True
             po.flags.ignore_mandatory = True
             po.insert(ignore_permissions=True)
-
-            # Commit after each PO creation to ensure it's saved
             frappe.db.commit()
 
             created.append({
@@ -297,6 +294,6 @@ def create_purchase_orders(material_request, items):
             "existing": existing
         }
 
-    except Exception as e:
+    except Exception:
         frappe.log_error(frappe.get_traceback(), "Auto PO Creation Error")
-        frappe.throw(str(e))
+        frappe.throw("Error while creating Purchase Orders. Please check error log.")
