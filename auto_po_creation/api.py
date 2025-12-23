@@ -313,9 +313,6 @@
 
 
 
-
-
-
 import frappe
 from collections import defaultdict
 import json
@@ -396,14 +393,16 @@ def create_purchase_orders(material_request, items):
         company_abbr = company_doc.abbr
         company_state = company_doc.gstin[:2] if company_doc.gstin else None
 
-        # Map item_code -> MR item details (warehouse + row name)
+        # Map item_code -> MR item details (warehouse, row name, qty, uom)
         mr_item_map = {}
         for d in mr.items:
             if not d.warehouse:
                 frappe.throw(f"Warehouse missing for Item {d.item_code}")
             mr_item_map[d.item_code] = {
                 "warehouse": d.warehouse,
-                "mr_item_name": d.name  # Material Request Item row name
+                "mr_item_name": d.name,  # Material Request Item row name
+                "qty": d.qty,
+                "uom": d.uom or d.stock_uom  # Use UOM from MR item
             }
 
         # Group items per supplier, skip ones already on a PO
@@ -433,12 +432,12 @@ def create_purchase_orders(material_request, items):
 
             supplier_items_map[supplier].append({
                 "item_code": item_code,
-                "qty": item["qty"],
-                "uom": "Nos",
+                "qty": item.get("qty") or mr_details["qty"],  # Use qty from item or MR
+                "uom": mr_details["uom"],  # FIXED: Use UOM from Material Request
                 "warehouse": mr_details["warehouse"],
                 "schedule_date": frappe.utils.nowdate(),
                 "material_request": material_request,
-                "material_request_item": mr_details["mr_item_name"],  # FIXED: Added this field
+                "material_request_item": mr_details["mr_item_name"],
                 "project": project
             })
 
