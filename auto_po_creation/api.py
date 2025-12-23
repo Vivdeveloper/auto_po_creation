@@ -489,7 +489,6 @@
 
 
 
-
 import frappe
 from collections import defaultdict
 import json
@@ -622,7 +621,7 @@ def create_purchase_orders(material_request, items):
                 "qty": item.get("qty") or mr_details["qty"],
                 "uom": mr_details["uom"],
                 "stock_uom": mr_details["stock_uom"],
-                "conversion_factor": mr_details["conversion_factor"],  # ADDED
+                "conversion_factor": mr_details["conversion_factor"],
                 "warehouse": mr_details["warehouse"],
                 "schedule_date": frappe.utils.nowdate(),
                 "material_request": material_request,
@@ -630,7 +629,7 @@ def create_purchase_orders(material_request, items):
                 "project": project
             })
 
-        # Create one PO per supplier
+        # Create one PO per supplier (in Draft)
         for supplier, items_list in supplier_items_map.items():
             supplier_doc = frappe.get_doc("Supplier", supplier)
             supplier_state = supplier_doc.gstin[:2] if supplier_doc.gstin else None
@@ -664,12 +663,7 @@ def create_purchase_orders(material_request, items):
             po.flags.ignore_mandatory = True
             po.flags.ignore_validate = True
             po.insert(ignore_permissions=True, ignore_mandatory=True)
-            
-            # Submit the PO immediately
-            po.flags.ignore_permissions = True
-            po.flags.ignore_mandatory = True
-            po.flags.ignore_validate = True
-            po.submit()
+            # REMOVED: po.submit() - Keep PO in Draft state
             
             frappe.db.commit()
 
