@@ -488,7 +488,6 @@
 
 
 
-
 import frappe
 from collections import defaultdict
 import json
@@ -586,7 +585,9 @@ def create_purchase_orders(material_request, items):
                 "stock_uom": d.stock_uom,
                 "conversion_factor": d.conversion_factor if hasattr(d, 'conversion_factor') else 1.0,
                 "item_name": item_doc.item_name,
-                "description": d.description or item_doc.description
+                "description": d.description or item_doc.description,
+                "custom_packing_qty": getattr(d, 'custom_packing_qty', None),  # ADDED
+                "custom_total_qty": getattr(d, 'custom_total_qty', None)  # ADDED
             }
 
         # Group items per supplier, skip ones already on a PO
@@ -614,7 +615,7 @@ def create_purchase_orders(material_request, items):
             if not mr_details:
                 frappe.throw(f"Item {item_code} not found in Material Request")
 
-            supplier_items_map[supplier].append({
+            po_item = {
                 "item_code": item_code,
                 "item_name": mr_details["item_name"],
                 "description": mr_details["description"],
@@ -627,7 +628,16 @@ def create_purchase_orders(material_request, items):
                 "material_request": material_request,
                 "material_request_item": mr_details["mr_item_name"],
                 "project": project
-            })
+            }
+            
+            # Add custom fields if they exist
+            if mr_details["custom_packing_qty"] is not None:
+                po_item["custom_packing_qty"] = mr_details["custom_packing_qty"]
+            
+            if mr_details["custom_total_qty"] is not None:
+                po_item["custom_total_qty"] = mr_details["custom_total_qty"]
+            
+            supplier_items_map[supplier].append(po_item)
 
         # Create one PO per supplier (in Draft)
         for supplier, items_list in supplier_items_map.items():
@@ -663,7 +673,6 @@ def create_purchase_orders(material_request, items):
             po.flags.ignore_mandatory = True
             po.flags.ignore_validate = True
             po.insert(ignore_permissions=True, ignore_mandatory=True)
-            # REMOVED: po.submit() - Keep PO in Draft state
             
             frappe.db.commit()
 
