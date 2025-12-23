@@ -490,7 +490,6 @@
 
 
 
-
 import frappe
 from collections import defaultdict
 import json
@@ -571,16 +570,24 @@ def create_purchase_orders(material_request, items):
         company_abbr = company_doc.abbr
         company_state = company_doc.gstin[:2] if company_doc.gstin else None
 
-        # Map item_code -> MR item details (warehouse, row name, qty, uom)
+        # Map item_code -> MR item details
         mr_item_map = {}
         for d in mr.items:
             if not d.warehouse:
                 frappe.throw(f"Warehouse missing for Item {d.item_code}")
+            
+            # Get item details to fetch conversion factor
+            item_doc = frappe.get_doc("Item", d.item_code)
+            
             mr_item_map[d.item_code] = {
                 "warehouse": d.warehouse,
                 "mr_item_name": d.name,
                 "qty": d.qty,
-                "uom": d.uom or d.stock_uom
+                "uom": d.uom or d.stock_uom,
+                "stock_uom": d.stock_uom,
+                "conversion_factor": d.conversion_factor if hasattr(d, 'conversion_factor') else 1.0,
+                "item_name": item_doc.item_name,
+                "description": d.description or item_doc.description
             }
 
         # Group items per supplier, skip ones already on a PO
@@ -610,8 +617,12 @@ def create_purchase_orders(material_request, items):
 
             supplier_items_map[supplier].append({
                 "item_code": item_code,
+                "item_name": mr_details["item_name"],
+                "description": mr_details["description"],
                 "qty": item.get("qty") or mr_details["qty"],
                 "uom": mr_details["uom"],
+                "stock_uom": mr_details["stock_uom"],
+                "conversion_factor": mr_details["conversion_factor"],  # ADDED
                 "warehouse": mr_details["warehouse"],
                 "schedule_date": frappe.utils.nowdate(),
                 "material_request": material_request,
@@ -647,11 +658,11 @@ def create_purchase_orders(material_request, items):
                 try:
                     po.set_taxes()
                 except:
-                    pass  # If set_taxes fails, continue without it
+                    pass
 
             po.flags.ignore_permissions = True
             po.flags.ignore_mandatory = True
-            po.flags.ignore_validate = True  # Added to skip validation
+            po.flags.ignore_validate = True
             po.insert(ignore_permissions=True, ignore_mandatory=True)
             
             # Submit the PO immediately
