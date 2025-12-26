@@ -484,6 +484,10 @@
 #         frappe.log_error(frappe.get_traceback(), "Auto PO Creation Error")
 #         frappe.throw("Error while creating Purchase Orders. Please check error log.")
 
+
+
+
+
 import frappe
 from collections import defaultdict
 import json
@@ -493,6 +497,14 @@ def bypass_mr_permissions(doc, method=None):
     """Bypass Material Request permission checks."""
     if frappe.session.user != "Administrator":
         frappe.flags.ignore_permissions = True
+
+
+def bypass_po_item_validation(doc, method=None):
+    """Bypass Purchase Order Item validation checks."""
+    if doc.flags.ignore_validate:
+        return
+    # Always bypass item code validation
+    doc.flags.ignore_validate = True
 
 
 @frappe.whitelist()
@@ -621,8 +633,8 @@ def create_purchase_orders(material_request, items):
                 "conversion_factor": mr_details["conversion_factor"],
                 "warehouse": mr_details["warehouse"],
                 "schedule_date": frappe.utils.nowdate(),
-                "material_request": None,  # REMOVED MR LINK
-                "material_request_item": None,  # REMOVED MR ITEM LINK
+                "material_request": material_request,
+                "material_request_item": mr_details["mr_item_name"],
                 "project": project
             }
             
@@ -665,18 +677,25 @@ def create_purchase_orders(material_request, items):
                 except:
                     pass
 
-            # Bypass all validations and permission checks
+            # Set flags on parent and all child items
             po.flags.ignore_permissions = True
             po.flags.ignore_mandatory = True
             po.flags.ignore_validate = True
             po.flags.skip_db_update = False
+            po.flags.skip_validation = True
             
-            # Disable validation for child tables
+            # Set flags on all child items to bypass validation
             for item_row in po.items:
                 item_row.flags.ignore_validate = True
+                item_row.flags.skip_validation = True
             
             # Insert without validation
             po.insert(ignore_permissions=True, ignore_mandatory=True, ignore_validate=True)
+            
+            # Now save/submit if needed
+            po.reload_doc()
+            po.flags.ignore_validate = True
+            po.save(ignore_permissions=True, ignore_mandatory=True)
             
             frappe.db.commit()
 
@@ -693,4 +712,4 @@ def create_purchase_orders(material_request, items):
 
     except Exception:
         frappe.log_error(frappe.get_traceback(), "Auto PO Creation Error")
-        frappe.throw("Error while creating Purchase Orders. Please check error log.")
+        frappe.throw("Error while creating Purchase Orders. Please check error log."s)
