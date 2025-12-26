@@ -712,4 +712,4 @@ def create_purchase_orders(material_request, items):
 
     except Exception:
         frappe.log_error(frappe.get_traceback(), "Auto PO Creation Error")
-        frappe.throw("Error while creating Purchase Orders. Please check error log."s)
+        frappe.throw("Error while creating Purchase Orders. Please check error log.")
