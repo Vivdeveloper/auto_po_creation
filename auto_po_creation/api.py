@@ -484,7 +484,6 @@
 #         frappe.log_error(frappe.get_traceback(), "Auto PO Creation Error")
 #         frappe.throw("Error while creating Purchase Orders. Please check error log.")
 
-
 import frappe
 from collections import defaultdict
 import json
@@ -622,8 +621,8 @@ def create_purchase_orders(material_request, items):
                 "conversion_factor": mr_details["conversion_factor"],
                 "warehouse": mr_details["warehouse"],
                 "schedule_date": frappe.utils.nowdate(),
-                "material_request": material_request,
-                "material_request_item": mr_details["mr_item_name"],
+                "material_request": None,  # REMOVED MR LINK
+                "material_request_item": None,  # REMOVED MR ITEM LINK
                 "project": project
             }
             
@@ -670,10 +669,14 @@ def create_purchase_orders(material_request, items):
             po.flags.ignore_permissions = True
             po.flags.ignore_mandatory = True
             po.flags.ignore_validate = True
-            po.flags.skip_after_insert = True
+            po.flags.skip_db_update = False
+            
+            # Disable validation for child tables
+            for item_row in po.items:
+                item_row.flags.ignore_validate = True
             
             # Insert without validation
-            po.insert(ignore_permissions=True, ignore_mandatory=True)
+            po.insert(ignore_permissions=True, ignore_mandatory=True, ignore_validate=True)
             
             frappe.db.commit()
 
