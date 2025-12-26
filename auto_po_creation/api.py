@@ -485,7 +485,6 @@
 #         frappe.throw("Error while creating Purchase Orders. Please check error log.")
 
 
-
 import frappe
 from collections import defaultdict
 import json
@@ -521,12 +520,13 @@ def get_item_suppliers(item_code):
             if si.supplier:
                 suppliers.append(si.supplier)
 
-        # Variant handling (RM00072-C → RM00072)
+        # If no suppliers and code looks like a variant (contains '-')
         if not suppliers and "-" in item_code:
             parent_code = item_code.split("-")[0]
             try:
                 parent_item = frappe.get_doc("Item", parent_code)
                 for si in getattr(parent_item, "supplier_items", []):
+                    # Prefer custom_supplier_ on Item Supplier row
                     supplier_item_code = (
                         getattr(si, "custom_supplier_", None)
                         or si.supplier_part_no
@@ -534,6 +534,7 @@ def get_item_suppliers(item_code):
                     if supplier_item_code == item_code and si.supplier:
                         suppliers.append(si.supplier)
             except Exception:
+                # parent not found or other error – ignore
                 pass
 
         return list(set(suppliers))
@@ -545,9 +546,9 @@ def get_item_suppliers(item_code):
 
 @frappe.whitelist()
 def create_purchase_orders(material_request, items):
-    """Group MR items by supplier and create editable Purchase Orders."""
+    """Group MR items by supplier and create Purchase Orders."""
     try:
-        # Run with full rights
+        # Ensure full rights for background-like operation
         frappe.set_user("Administrator")
 
         items = json.loads(items or "[]")
@@ -564,36 +565,33 @@ def create_purchase_orders(material_request, items):
         company_abbr = company_doc.abbr
         company_state = company_doc.gstin[:2] if company_doc.gstin else None
 
-        # ----------------------------------------
-        # MAP MR ITEM DETAILS
-        # ----------------------------------------
+        # Map item_code -> MR item details
         mr_item_map = {}
         for d in mr.items:
             if not d.warehouse:
                 frappe.throw(f"Warehouse missing for Item {d.item_code}")
-
+            
+            # Get item details to fetch conversion factor
             item_doc = frappe.get_doc("Item", d.item_code)
-
+            
             mr_item_map[d.item_code] = {
                 "warehouse": d.warehouse,
+                "mr_item_name": d.name,
                 "qty": d.qty,
                 "uom": d.uom or d.stock_uom,
                 "stock_uom": d.stock_uom,
-                "conversion_factor": d.conversion_factor or 1,
+                "conversion_factor": d.conversion_factor if hasattr(d, 'conversion_factor') else 1.0,
                 "item_name": item_doc.item_name,
                 "description": d.description or item_doc.description,
-                "custom_packing_qty": getattr(d, "custom_packing_qty", None),
-                "custom_total_qty": getattr(d, "custom_total_qty", None),
+                "custom_packing_qty": getattr(d, 'custom_packing_qty', None),
+                "custom_total_qty": getattr(d, 'custom_total_qty', None)
             }
 
-        # ----------------------------------------
-        # GROUP ITEMS BY SUPPLIER
-        # ----------------------------------------
+        # Group items per supplier, skip ones already on a PO
         for item in items:
             item_code = item["item_code"]
             supplier = item["supplier"]
 
-            # Skip if PO already exists for this MR + item
             existing_po = frappe.get_all(
                 "Purchase Order Item",
                 filters={
@@ -624,22 +622,21 @@ def create_purchase_orders(material_request, items):
                 "conversion_factor": mr_details["conversion_factor"],
                 "warehouse": mr_details["warehouse"],
                 "schedule_date": frappe.utils.nowdate(),
-                "material_request": material_request,  # ✅ KEEP ONLY THIS
+                "material_request": material_request,
+                "material_request_item": mr_details["mr_item_name"],
                 "project": project
             }
-
-            # Optional custom fields
+            
+            # Add custom fields if they exist
             if mr_details["custom_packing_qty"] is not None:
                 po_item["custom_packing_qty"] = mr_details["custom_packing_qty"]
-
+            
             if mr_details["custom_total_qty"] is not None:
                 po_item["custom_total_qty"] = mr_details["custom_total_qty"]
-
+            
             supplier_items_map[supplier].append(po_item)
 
-        # ----------------------------------------
-        # CREATE PURCHASE ORDERS (DRAFT)
-        # ----------------------------------------
+        # Create one PO per supplier (in Draft)
         for supplier, items_list in supplier_items_map.items():
             supplier_doc = frappe.get_doc("Supplier", supplier)
             supplier_state = supplier_doc.gstin[:2] if supplier_doc.gstin else None
@@ -662,17 +659,22 @@ def create_purchase_orders(material_request, items):
                 "taxes_and_charges": tax_template
             })
 
+            # Apply the tax template to populate taxes table
             if tax_template:
                 try:
                     po.set_taxes()
-                except Exception:
+                except:
                     pass
 
+            # Bypass all validations and permission checks
             po.flags.ignore_permissions = True
             po.flags.ignore_mandatory = True
             po.flags.ignore_validate = True
+            po.flags.skip_after_insert = True
+            
+            # Insert without validation
             po.insert(ignore_permissions=True, ignore_mandatory=True)
-
+            
             frappe.db.commit()
 
             created.append({
