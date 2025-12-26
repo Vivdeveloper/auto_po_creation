@@ -487,7 +487,6 @@
 
 
 
-
 import frappe
 from collections import defaultdict
 import json
@@ -501,10 +500,16 @@ def bypass_mr_permissions(doc, method=None):
 
 def bypass_po_item_validation(doc, method=None):
     """Bypass Purchase Order Item validation checks."""
-    if doc.flags.ignore_validate:
-        return
-    # Always bypass item code validation
-    doc.flags.ignore_validate = True
+    # Skip the "Item Code must be equal to Material Request Item Code" validation
+    # Allow any item code changes
+    pass
+
+
+def bypass_po_validation(doc, method=None):
+    """Bypass Purchase Order validation checks."""
+    # Allow child table modifications without validation
+    for item in doc.items:
+        item.flags.ignore_validate = True
 
 
 @frappe.whitelist()
