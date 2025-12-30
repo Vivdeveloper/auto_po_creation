@@ -250,23 +250,23 @@ doctype_js = {
 
 
 
-# doc_events = {
-#     "Purchase Order": {
-#         "validate": "auto_po_creation.po_tax_fix.apply_purchase_taxes"
-#     }
-# }
-
-
-
-
 doc_events = {
-    "Purchase Order Item": {
-        "validate": "auto_po_creation.api.bypass_po_item_validation"
-    },
     "Purchase Order": {
-        "validate": "auto_po_creation.api.bypass_po_validation",
-        "before_submit": "auto_po_creation.api.bypass_po_validation"
+        "validate": "auto_po_creation.po_tax_fix.apply_purchase_taxes"
     }
 }
 
 
+
+# doc_events = {
+#     "Purchase Order Item": {
+#         "validate": "auto_po_creation.api.bypass_po_item_validation",
+#         "before_save": "auto_po_creation.api.bypass_po_item_validation",
+#         "before_submit": "auto_po_creation.api.bypass_po_item_validation"
+#     },
+#     "Purchase Order": {
+#         "validate": "auto_po_creation.api.bypass_po_validation",
+#         "before_save": "auto_po_creation.api.bypass_po_validation",
+#         "before_submit": "auto_po_creation.api.bypass_po_validation"
+#     }
+# }
