@@ -440,6 +440,7 @@ def create_purchase_orders(material_request, items):
                 "material_request_item": mr_details["mr_item_name"],
                 "project": project
             })
+            
 
         # Create one PO per supplier
         for supplier, items_list in supplier_items_map.items():

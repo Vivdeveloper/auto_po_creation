@@ -257,16 +257,3 @@ doc_events = {
 }
 
 
-
-# doc_events = {
-#     "Purchase Order Item": {
-#         "validate": "auto_po_creation.api.bypass_po_item_validation",
-#         "before_save": "auto_po_creation.api.bypass_po_item_validation",
-#         "before_submit": "auto_po_creation.api.bypass_po_item_validation"
-#     },
-#     "Purchase Order": {
-#         "validate": "auto_po_creation.api.bypass_po_validation",
-#         "before_save": "auto_po_creation.api.bypass_po_validation",
-#         "before_submit": "auto_po_creation.api.bypass_po_validation"
-#     }
-# }
