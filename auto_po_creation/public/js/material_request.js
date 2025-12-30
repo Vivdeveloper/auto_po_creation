@@ -384,11 +384,8 @@
 
 
 
-
-
 frappe.ui.form.on('Material Request', {
     refresh(frm) {
-        // Only on submitted MR
         if (frm.doc.__islocal || frm.doc.docstatus !== 1) return;
 
         frm.add_custom_button(__('Auto Create PO'), () => {
@@ -396,21 +393,19 @@ frappe.ui.form.on('Material Request', {
                 method: 'auto_po_creation.api.get_po_status',
                 args: { material_request: frm.doc.name },
                 callback(r) {
+
                     const po_items = r.message || [];
                     const table_data = [];
                     const missing_supplier = [];
 
-                    // Build table rows
                     (frm.doc.items || []).forEach(row => {
-                        // Always pick custom supplier first
                         const supplier =
-                            row.custom_supplier_ ||      // custom field on MR Item
+                            row.custom_supplier_ ||
                             row.supplier ||
                             row.supplier_code ||
                             row.default_supplier;
 
                         if (!supplier) {
-                            // Will trigger the "Supplier Missing" popup
                             missing_supplier.push(row.item_code);
                             return;
                         }
@@ -423,7 +418,8 @@ frappe.ui.form.on('Material Request', {
                             item_code: row.item_code,
                             item_name: row.item_name,
                             qty: row.qty,
-                            supplier: supplier
+                            supplier: supplier,
+                            supplier_name: ''   // will be fetched
                         });
                     });
 
@@ -439,7 +435,6 @@ frappe.ui.form.on('Material Request', {
                         return;
                     }
 
-                    // Dialog with items
                     const dialog = new frappe.ui.Dialog({
                         title: __('Select Items for PO'),
                         size: 'extra-large',
@@ -450,7 +445,7 @@ frappe.ui.form.on('Material Request', {
                                 label: 'Items',
                                 cannot_add_rows: true,
                                 cannot_delete_rows: true,
-                                in_place_edit: true,  // Changed to true to allow editing
+                                in_place_edit: true,
                                 fields: [
                                     {
                                         fieldname: 'po_created',
@@ -477,18 +472,22 @@ frappe.ui.form.on('Material Request', {
                                         fieldname: 'qty',
                                         fieldtype: 'Float',
                                         label: 'Qty',
-                                        in_list_view: 1,
-                                        read_only: 0  // Changed to editable
+                                        in_list_view: 1
                                     },
                                     {
                                         fieldname: 'supplier',
                                         fieldtype: 'Link',
                                         options: 'Supplier',
-                                        label: 'Supplier',
+                                        label: 'Supplier Code',
+                                        in_list_view: 1
+                                    },
+                                    {
+                                        fieldname: 'supplier_name',
+                                        fieldtype: 'Data',
+                                        label: 'Supplier Name',
                                         in_list_view: 1,
-                                        read_only: 0  // Changed to editable - THIS IS THE KEY CHANGE
+                                        read_only: 1
                                     }
-                                    
                                 ]
                             }
                         ],
@@ -496,17 +495,17 @@ frappe.ui.form.on('Material Request', {
                         primary_action() {
                             const selected_items = dialog.fields_dict.items.grid
                                 .get_selected_children()
-                                .filter(row => !row._po_created);
+                                .filter(r => !r._po_created);
 
                             if (!selected_items.length) {
                                 frappe.msgprint(__('Please select items without existing PO.'));
                                 return;
                             }
 
-                            const payload = selected_items.map(row => ({
-                                item_code: row.item_code,
-                                qty: row.qty,
-                                supplier: row.supplier
+                            const payload = selected_items.map(r => ({
+                                item_code: r.item_code,
+                                qty: r.qty,
+                                supplier: r.supplier
                             }));
 
                             frappe.call({
@@ -522,31 +521,16 @@ frappe.ui.form.on('Material Request', {
 
                                     let msg = '';
 
-                                    if (res.message.created && res.message.created.length > 0) {
+                                    if (res.message.created?.length) {
                                         msg += `<b>Purchase Orders Created:</b><br><br>`;
-
                                         res.message.created.forEach(po => {
                                             msg += `
                                                 <b>PO:</b>
                                                 <a href="/app/purchase-order/${po.name}" target="_blank">
                                                     ${po.name}
-                                                </a> 
+                                                </a>
                                                 (${po.supplier})<br>
                                                 <b>Items:</b> ${po.items.join(', ')}<br><br>
-                                            `;
-                                        });
-                                    }
-
-                                    if (res.message.existing && res.message.existing.length > 0) {
-                                        msg += `<br><b>Items Already in PO:</b><br><br>`;
-
-                                        res.message.existing.forEach(po => {
-                                            msg += `
-                                                <b>Supplier:</b> ${po.supplier}<br>
-                                                <b>Existing PO:</b>
-                                                <a href="/app/purchase-order/${po.po_name}" target="_blank">
-                                                    ${po.po_name}
-                                                </a><br><br>
                                             `;
                                         });
                                     }
@@ -564,17 +548,43 @@ frappe.ui.form.on('Material Request', {
                         }
                     });
 
-                    // Load data
                     dialog.fields_dict.items.df.data = table_data;
                     dialog.fields_dict.items.grid.refresh();
 
-                    // Disable checkboxes and make rows read-only for items that already have PO
+                    // 🔥 RELIABLE supplier-name fetch
+                    dialog.$wrapper.on(
+                        'change',
+                        'input[data-fieldname="supplier"]',
+                        function () {
+                            const $row = $(this).closest('.grid-row');
+                            if (!$row.length) return;
+
+                            const docname = $row.attr('data-name');
+                            const grid = dialog.fields_dict.items.grid;
+                            const row = grid.grid_rows_by_docname[docname].doc;
+
+                            if (!row.supplier) return;
+
+                            frappe.db.get_value(
+                                'Supplier',
+                                row.supplier,
+                                'supplier_name'
+                            ).then(r => {
+                                frappe.model.set_value(
+                                    row.doctype,
+                                    row.name,
+                                    'supplier_name',
+                                    r.message.supplier_name
+                                );
+                            });
+                        }
+                    );
+
+                    // Disable rows with existing PO
                     setTimeout(() => {
                         dialog.fields_dict.items.grid.grid_rows.forEach(r => {
-                            if (r.doc._po_created) {
+                            if (r.doc._po_created && r.$checkbox) {
                                 r.$checkbox.prop('disabled', true);
-                                r.$checkbox.prop('checked', false);
-                                // Make the entire row appear disabled
                                 r.$row.addClass('text-muted');
                             }
                         });
