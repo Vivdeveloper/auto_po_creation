@@ -488,6 +488,7 @@ frappe.ui.form.on('Material Request', {
                                         in_list_view: 1,
                                         read_only: 0  // Changed to editable - THIS IS THE KEY CHANGE
                                     }
+                                    
                                 ]
                             }
                         ],
