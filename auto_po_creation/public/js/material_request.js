@@ -382,8 +382,6 @@
 
 
 
-
-
 frappe.ui.form.on('Material Request', {
     refresh(frm) {
         if (frm.doc.__islocal || frm.doc.docstatus !== 1) return;
@@ -452,41 +450,47 @@ frappe.ui.form.on('Material Request', {
                                         fieldtype: 'Check',
                                         label: 'PO Created',
                                         in_list_view: 1,
-                                        read_only: 1
+                                        read_only: 1,
+                                        columns: 1
                                     },
                                     {
                                         fieldname: 'item_code',
                                         fieldtype: 'Data',
                                         label: 'Item Code',
                                         in_list_view: 1,
-                                        read_only: 1
+                                        read_only: 1,
+                                        columns: 2
                                     },
                                     {
                                         fieldname: 'item_name',
                                         fieldtype: 'Data',
                                         label: 'Item Name',
                                         in_list_view: 1,
-                                        read_only: 1
+                                        read_only: 1,
+                                        columns: 2
                                     },
                                     {
                                         fieldname: 'qty',
                                         fieldtype: 'Float',
                                         label: 'Qty',
-                                        in_list_view: 1
+                                        in_list_view: 1,
+                                        columns: 1
                                     },
                                     {
                                         fieldname: 'supplier',
                                         fieldtype: 'Link',
                                         options: 'Supplier',
                                         label: 'Supplier Code',
-                                        in_list_view: 1
+                                        in_list_view: 1,
+                                        columns: 2
                                     },
                                     {
                                         fieldname: 'supplier_name',
                                         fieldtype: 'Data',
                                         label: 'Supplier Name',
                                         in_list_view: 1,
-                                        read_only: 1
+                                        read_only: 1,
+                                        columns: 2
                                     }
                                 ]
                             }
@@ -551,7 +555,28 @@ frappe.ui.form.on('Material Request', {
                     dialog.fields_dict.items.df.data = table_data;
                     dialog.fields_dict.items.grid.refresh();
 
-                    // 🔥 RELIABLE supplier-name fetch
+                    // Fetch and populate supplier names for initial data
+                    const fetch_supplier_names = async () => {
+                        for (let row of table_data) {
+                            if (row.supplier) {
+                                try {
+                                    const r = await frappe.db.get_value(
+                                        'Supplier',
+                                        row.supplier,
+                                        'supplier_name'
+                                    );
+                                    row.supplier_name = r.message.supplier_name || '';
+                                } catch (e) {
+                                    row.supplier_name = '';
+                                }
+                            }
+                        }
+                        dialog.fields_dict.items.grid.refresh();
+                    };
+
+                    fetch_supplier_names();
+
+                    // Handle supplier change to update supplier name
                     dialog.$wrapper.on(
                         'change',
                         'input[data-fieldname="supplier"]',
@@ -563,7 +588,15 @@ frappe.ui.form.on('Material Request', {
                             const grid = dialog.fields_dict.items.grid;
                             const row = grid.grid_rows_by_docname[docname].doc;
 
-                            if (!row.supplier) return;
+                            if (!row.supplier) {
+                                frappe.model.set_value(
+                                    row.doctype,
+                                    row.name,
+                                    'supplier_name',
+                                    ''
+                                );
+                                return;
+                            }
 
                             frappe.db.get_value(
                                 'Supplier',
@@ -574,7 +607,7 @@ frappe.ui.form.on('Material Request', {
                                     row.doctype,
                                     row.name,
                                     'supplier_name',
-                                    r.message.supplier_name
+                                    r.message.supplier_name || ''
                                 );
                             });
                         }

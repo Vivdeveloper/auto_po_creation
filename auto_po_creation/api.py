@@ -505,8 +505,6 @@
 
 
 
-
-
 import frappe
 from collections import defaultdict
 import json
