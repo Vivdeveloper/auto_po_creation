@@ -704,3 +704,46 @@ def create_purchase_orders(material_request, items):
     except Exception:
         frappe.log_error(frappe.get_traceback(), "Auto PO Creation Error")
         frappe.throw("Error while creating Purchase Orders. Please check error log.")
+
+@frappe.whitelist()
+def get_items_for_supplier(doctype, txt, searchfield, start, page_len, filters):
+    supplier = (filters or {}).get("supplier")
+
+    # Base condition
+    base_conditions = """
+        i.is_purchase_item = 1
+        AND i.disabled = 0
+        AND (i.name LIKE %(txt)s OR i.item_name LIKE %(txt)s)
+    """
+
+    # No supplier → show all purchasable items
+    if not supplier:
+        return frappe.db.sql(f"""
+            SELECT i.name, i.item_name
+            FROM `tabItem` i
+            WHERE {base_conditions}
+            ORDER BY i.name
+            LIMIT %(start)s, %(page_len)s
+        """, {
+            "txt": f"%{txt}%",
+            "start": start,
+            "page_len": page_len
+        })
+
+    # Supplier selected → only items linked in Item Supplier table
+    return frappe.db.sql(f"""
+        SELECT DISTINCT i.name, i.item_name
+        FROM `tabItem` i
+        INNER JOIN `tabItem Supplier` s
+            ON s.parent = i.name
+        WHERE
+            {base_conditions}
+            AND s.supplier = %(supplier)s
+        ORDER BY i.name
+        LIMIT %(start)s, %(page_len)s
+    """, {
+        "supplier": supplier,
+        "txt": f"%{txt}%",
+        "start": start,
+        "page_len": page_len
+    })
