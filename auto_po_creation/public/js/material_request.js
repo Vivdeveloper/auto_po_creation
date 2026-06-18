@@ -421,110 +421,74 @@ function apply_supplier_names_to_table_data(table_data, name_map) {
     });
 }
 
-const MR_PO_CONFIG = {
-    get_status_method: 'auto_po_creation.api.get_po_status',
-    create_method: 'auto_po_creation.api.create_purchase_orders',
-    dialog_title: __('Select Items for PO'),
-    primary_label: __('Create PO'),
-    created_label: __('PO Created'),
-    empty_msg: __('Please select items without existing PO.'),
-    freeze_msg: __('Creating Purchase Orders...'),
-    summary_title: __('PO Creation Summary'),
-    summary_heading: __('Purchase Orders Created:'),
-    link_route: 'purchase-order',
-    link_prefix: __('PO'),
-};
-
-const MR_SQ_CONFIG = {
-    get_status_method: 'auto_po_creation.api.get_sq_status',
-    create_method: 'auto_po_creation.api.create_supplier_quotations',
-    dialog_title: __('Select Items for Supplier Quotation'),
-    primary_label: __('Create Supplier Quotation'),
-    created_label: __('Quotation Created'),
-    empty_msg: __('Please select items without existing Supplier Quotation.'),
-    freeze_msg: __('Creating Supplier Quotations...'),
-    summary_title: __('Supplier Quotation Summary'),
-    summary_heading: __('Supplier Quotations Created:'),
-    link_route: 'supplier-quotation',
-    link_prefix: __('Supplier Quotation'),
-};
-
-function get_mr_item_supplier(row) {
-    return (
-        row.custom_supplier_ ||
-        row.supplier ||
-        row.supplier_code ||
-        row.default_supplier
-    );
-}
-
-function open_mr_document_dialog(frm, config) {
-    frappe.call({
-        method: config.get_status_method,
-        args: { material_request: frm.doc.name },
-        callback(r) {
-            const existing_items = r.message || [];
-            const table_data = [];
-            const missing_supplier = [];
-
-            (frm.doc.items || []).forEach((row) => {
-                const supplier = get_mr_item_supplier(row);
-
-                if (!supplier) {
-                    missing_supplier.push(row.item_code);
-                    return;
-                }
-
-                const doc_created = existing_items.includes(row.item_code);
-
-                table_data.push({
-                    doc_created: doc_created ? 1 : 0,
-                    _doc_created: doc_created,
-                    item_code: row.item_code,
-                    item_name: row.item_name,
-                    qty: row.qty,
-                    supplier: supplier,
-                    supplier_name: row.custom_supplier_name || '',
-                });
-            });
-
-            if (missing_supplier.length) {
-                frappe.msgprint({
-                    title: __('Supplier Missing'),
-                    indicator: 'red',
-                    message: `
-                        Supplier not selected for:<br>
-                        <b>${missing_supplier.join(', ')}</b>
-                    `,
-                });
-                return;
-            }
-
-            const suppliers = [...new Set(table_data.map((row) => row.supplier))];
-
-            fetch_supplier_name_map(suppliers).then((name_map) => {
-                apply_supplier_names_to_table_data(table_data, name_map);
-                show_mr_selection_dialog(frm, table_data, config);
-            });
-        },
-    });
-}
-
 frappe.ui.form.on('Material Request', {
     refresh(frm) {
         if (frm.doc.__islocal || frm.doc.docstatus !== 1) return;
 
         if (frm.doc.material_request_type == "Purchase"){
             frm.add_custom_button(__('Auto Create PO'), () => {
-                open_mr_document_dialog(frm, MR_PO_CONFIG);
+                frappe.call({
+                    method: 'auto_po_creation.api.get_po_status',
+                    args: { material_request: frm.doc.name },
+                    callback(r) {
+    
+                        const po_items = r.message || [];
+                        const table_data = [];
+                        const missing_supplier = [];
+    
+                        (frm.doc.items || []).forEach(row => {
+                            const supplier =
+                                row.custom_supplier_ ||
+                                row.supplier ||
+                                row.supplier_code ||
+                                row.default_supplier;
+    
+                            if (!supplier) {
+                                missing_supplier.push(row.item_code);
+                                return;
+                            }
+    
+                            const po_created = po_items.includes(row.item_code);
+    
+                            table_data.push({
+                                po_created: po_created ? 1 : 0,
+                                _po_created: po_created,
+                                item_code: row.item_code,
+                                item_name: row.item_name,
+                                qty: row.qty,
+                                supplier: supplier,
+                                supplier_name: row.custom_supplier_name || ''
+                            });
+                        });
+    
+                        if (missing_supplier.length) {
+                            frappe.msgprint({
+                                title: __('Supplier Missing'),
+                                indicator: 'red',
+                                message: `
+                                    Supplier not selected for:<br>
+                                    <b>${missing_supplier.join(', ')}</b>
+                                `
+                            });
+                            return;
+                        }
+
+                        const suppliers = [...new Set(table_data.map((row) => row.supplier))];
+
+                        fetch_supplier_name_map(suppliers).then((name_map) => {
+                            apply_supplier_names_to_table_data(table_data, name_map);
+                            show_po_selection_dialog(frm, table_data);
+                        });
+                    }
+                });
             });
         }
     }
 });
 
-function show_mr_selection_dialog(frm, table_data, config) {
+function show_po_selection_dialog(frm, table_data) {
     const dialog = new frappe.ui.Dialog({
-        title: config.dialog_title,
+        title: __('Select Items for PO'),
         size: 'extra-large',
         fields: [
             {
@@ -536,9 +500,9 @@ function show_mr_selection_dialog(frm, table_data, config) {
                 in_place_edit: true,
                 fields: [
                     {
-                        fieldname: 'doc_created',
+                        fieldname: 'po_created',
                         fieldtype: 'Check',
-                        label: config.created_label,
+                        label: 'PO Created',
                         in_list_view: 1,
                         read_only: 1
                     },
@@ -580,14 +544,14 @@ function show_mr_selection_dialog(frm, table_data, config) {
                 ]
             }
         ],
-        primary_action_label: config.primary_label,
+        primary_action_label: __('Create PO'),
         primary_action() {
             const selected_items = dialog.fields_dict.items.grid
                 .get_selected_children()
-                .filter((r) => !r._doc_created);
+                .filter((r) => !r._po_created);
 
             if (!selected_items.length) {
-                frappe.msgprint(config.empty_msg);
+                frappe.msgprint(__('Please select items without existing PO.'));
                 return;
             }
 
@@ -598,34 +562,34 @@ function show_mr_selection_dialog(frm, table_data, config) {
             }));
 
             frappe.call({
-                method: config.create_method,
+                method: 'auto_po_creation.api.create_purchase_orders',
                 args: {
                     material_request: frm.doc.name,
                     items: JSON.stringify(payload)
                 },
                 freeze: true,
-                freeze_message: config.freeze_msg,
+                freeze_message: __('Creating Purchase Orders...'),
                 callback(res) {
                     if (!res.message) return;
 
                     let msg = '';
 
                     if (res.message.created?.length) {
-                        msg += `<b>${config.summary_heading}</b><br><br>`;
-                        res.message.created.forEach((doc) => {
+                        msg += `<b>Purchase Orders Created:</b><br><br>`;
+                        res.message.created.forEach((po) => {
                             msg += `
-                                <b>${config.link_prefix}:</b>
-                                <a href="/app/${config.link_route}/${doc.name}" target="_blank">
-                                    ${doc.name}
+                                <b>PO:</b>
+                                <a href="/app/purchase-order/${po.name}" target="_blank">
+                                    ${po.name}
                                 </a>
-                                (${doc.supplier})<br>
-                                <b>Items:</b> ${doc.items.join(', ')}<br><br>
+                                (${po.supplier})<br>
+                                <b>Items:</b> ${po.items.join(', ')}<br><br>
                             `;
                         });
                     }
 
                     frappe.msgprint({
-                        title: config.summary_title,
+                        title: __('PO Creation Summary'),
                         indicator: 'green',
                         message: msg
                     });
@@ -649,7 +613,7 @@ function show_mr_selection_dialog(frm, table_data, config) {
                 });
 
                 grid.grid_rows.forEach((r) => {
-                    if (r.doc._doc_created && r.$checkbox) {
+                    if (r.doc._po_created && r.$checkbox) {
                         r.$checkbox.prop('disabled', true);
                         r.$row.addClass('text-muted');
                     }

@@ -562,52 +562,96 @@ def get_item_suppliers(item_code):
     """Fetch allowed suppliers for an item (handles variants) with supplier names."""
     try:
         suppliers = []
+        seen = set()
+
+        def add_supplier(supplier):
+            if not supplier or supplier in seen:
+                return
+            seen.add(supplier)
+            supplier_name = frappe.db.get_value("Supplier", supplier, "supplier_name")
+            suppliers.append({
+                "supplier": supplier,
+                "supplier_name": supplier_name or supplier,
+            })
+
+        for row in frappe.get_all(
+            "Item Supplier",
+            filters={"custom_supplier_item": item_code},
+            fields=["supplier"],
+        ):
+            add_supplier(row.supplier)
+
+        if suppliers:
+            return suppliers
+
+        for row in frappe.get_all(
+            "Item Supplier",
+            filters={"supplier_part_no": item_code},
+            fields=["supplier"],
+        ):
+            add_supplier(row.supplier)
+
+        if suppliers:
+            return suppliers
 
         item = frappe.get_doc("Item", item_code)
 
-        # Direct suppliers on Item
         for si in getattr(item, "supplier_items", []):
-            if si.supplier:
-                supplier_name = frappe.db.get_value("Supplier", si.supplier, "supplier_name")
-                suppliers.append({
-                    "supplier": si.supplier,
-                    "supplier_name": supplier_name or si.supplier
-                })
+            add_supplier(si.supplier)
 
-        # If no suppliers and code looks like a variant (contains '-')
         if not suppliers and "-" in item_code:
             parent_code = item_code.split("-")[0]
             try:
                 parent_item = frappe.get_doc("Item", parent_code)
                 for si in getattr(parent_item, "supplier_items", []):
-                    # Prefer custom_supplier_ on Item Supplier row
                     supplier_item_code = (
-                        getattr(si, "custom_supplier_", None)
+                        getattr(si, "custom_supplier_item", None)
                         or si.supplier_part_no
                     )
-                    if supplier_item_code == item_code and si.supplier:
-                        supplier_name = frappe.db.get_value("Supplier", si.supplier, "supplier_name")
-                        suppliers.append({
-                            "supplier": si.supplier,
-                            "supplier_name": supplier_name or si.supplier
-                        })
+                    if supplier_item_code == item_code:
+                        add_supplier(si.supplier)
             except Exception:
-                # parent not found or other error – ignore
                 pass
 
-        # Remove duplicates based on supplier code
-        seen = set()
-        unique_suppliers = []
-        for s in suppliers:
-            if s["supplier"] not in seen:
-                seen.add(s["supplier"])
-                unique_suppliers.append(s)
-
-        return unique_suppliers
+        return suppliers
 
     except Exception:
         frappe.log_error(frappe.get_traceback(), "Get Item Suppliers Error")
         return []
+
+
+@frappe.whitelist()
+@frappe.validate_and_sanitize_search_inputs
+def supplier_link_query(doctype, txt, searchfield, start, page_len, filters):
+    """Filter Supplier link options based on the selected item."""
+    if isinstance(filters, str):
+        filters = json.loads(filters)
+
+    item_code = (filters or {}).get("item_code")
+    if not item_code:
+        return []
+
+    suppliers = [s["supplier"] for s in get_item_suppliers(item_code)]
+    if not suppliers:
+        return []
+
+    return frappe.db.sql(
+        """
+        SELECT name, supplier_name
+        FROM `tabSupplier`
+        WHERE name IN %(suppliers)s
+          AND disabled = 0
+          AND (name LIKE %(txt)s OR supplier_name LIKE %(txt)s)
+        ORDER BY name
+        LIMIT %(page_len)s OFFSET %(start)s
+        """,
+        {
+            "suppliers": suppliers,
+            "txt": f"%{txt}%",
+            "page_len": page_len,
+            "start": start,
+        },
+    )
 
 
 @frappe.whitelist()
