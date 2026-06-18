@@ -547,6 +547,17 @@ def get_supplier_name_map(suppliers):
 
 
 @frappe.whitelist()
+def get_sq_status(material_request):
+    """Return item codes from existing Supplier Quotation Items for this MR."""
+    sq_items = frappe.get_all(
+        "Supplier Quotation Item",
+        filters={"material_request": material_request},
+        fields=["item_code"],
+    )
+    return list({d.item_code for d in sq_items})
+
+
+@frappe.whitelist()
 def get_item_suppliers(item_code):
     """Fetch allowed suppliers for an item (handles variants) with supplier names."""
     try:
@@ -721,6 +732,123 @@ def create_purchase_orders(material_request, items):
     except Exception:
         frappe.log_error(frappe.get_traceback(), "Auto PO Creation Error")
         frappe.throw("Error while creating Purchase Orders. Please check error log.")
+
+
+@frappe.whitelist()
+def create_supplier_quotations(material_request, items):
+    """Group MR items by supplier and create Supplier Quotations."""
+    try:
+        frappe.set_user("Administrator")
+
+        items = json.loads(items or "[]")
+        created = []
+        existing = []
+        supplier_items_map = defaultdict(list)
+
+        mr = frappe.get_doc("Material Request", material_request)
+
+        company = mr.company or frappe.defaults.get_global_default("company")
+        project = getattr(mr, "custom_project", None)
+
+        company_doc = frappe.get_doc("Company", company)
+        company_abbr = company_doc.abbr
+        company_state = company_doc.gstin[:2] if company_doc.gstin else None
+
+        mr_item_map = {}
+        for d in mr.items:
+            if not d.warehouse:
+                frappe.throw(f"Warehouse missing for Item {d.item_code}")
+            mr_item_map[d.item_code] = {
+                "warehouse": d.warehouse,
+                "mr_item_name": d.name,
+                "qty": d.qty,
+                "uom": d.uom or d.stock_uom,
+                "custom_packing_qty": getattr(d, "custom_packing_qty", None),
+                "custom_total_qty": getattr(d, "custom_total_qty", None),
+            }
+
+        for item in items:
+            item_code = item["item_code"]
+            supplier = item["supplier"]
+
+            existing_sq = frappe.get_all(
+                "Supplier Quotation Item",
+                filters={
+                    "material_request": material_request,
+                    "item_code": item_code,
+                },
+                fields=["parent"],
+            )
+
+            if existing_sq:
+                existing.append({
+                    "supplier": supplier,
+                    "sq_name": existing_sq[0]["parent"],
+                })
+                continue
+
+            mr_details = mr_item_map.get(item_code)
+            if not mr_details:
+                frappe.throw(f"Item {item_code} not found in Material Request")
+
+            sq_item = {
+                "item_code": item_code,
+                "qty": item.get("qty") or mr_details["qty"],
+                "uom": mr_details["uom"],
+                "warehouse": mr_details["warehouse"],
+                "material_request": material_request,
+                "material_request_item": mr_details["mr_item_name"],
+                "project": project,
+            }
+
+            if mr_details["custom_packing_qty"] is not None:
+                sq_item["custom_packing_qty"] = mr_details["custom_packing_qty"]
+
+            if mr_details["custom_total_qty"] is not None:
+                sq_item["custom_total_qty"] = mr_details["custom_total_qty"]
+
+            supplier_items_map[supplier].append(sq_item)
+
+        for supplier, items_list in supplier_items_map.items():
+            supplier_doc = frappe.get_doc("Supplier", supplier)
+            supplier_state = supplier_doc.gstin[:2] if supplier_doc.gstin else None
+
+            tax_template = None
+            if supplier_state and company_state:
+                if supplier_state == company_state:
+                    tax_template = f"Input GST In-state - {company_abbr}"
+                else:
+                    tax_template = f"Input GST Out-state - {company_abbr}"
+
+            sq = frappe.get_doc({
+                "doctype": "Supplier Quotation",
+                "supplier": supplier,
+                "company": company,
+                "transaction_date": frappe.utils.nowdate(),
+                "project": project,
+                "items": items_list,
+                "taxes_and_charges": tax_template,
+            })
+
+            sq.flags.ignore_permissions = True
+            sq.flags.ignore_mandatory = True
+            sq.insert(ignore_permissions=True)
+            frappe.db.commit()
+
+            created.append({
+                "name": sq.name,
+                "supplier": supplier,
+                "items": [i["item_code"] for i in items_list],
+            })
+
+        return {
+            "created": created,
+            "existing": existing,
+        }
+
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "Auto Supplier Quotation Creation Error")
+        frappe.throw("Error while creating Supplier Quotations. Please check error log.")
 
 @frappe.whitelist()
 def get_items_for_supplier(doctype, txt, searchfield, start, page_len, filters):
