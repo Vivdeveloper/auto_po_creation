@@ -530,6 +530,23 @@ def get_po_status(material_request):
 
 
 @frappe.whitelist()
+def get_supplier_name_map(suppliers):
+    """Return {supplier_code: supplier_name} for the given supplier codes."""
+    if isinstance(suppliers, str):
+        suppliers = json.loads(suppliers)
+
+    if not suppliers:
+        return {}
+
+    rows = frappe.get_all(
+        "Supplier",
+        filters={"name": ["in", suppliers]},
+        fields=["name", "supplier_name"],
+    )
+    return {row.name: row.supplier_name or row.name for row in rows}
+
+
+@frappe.whitelist()
 def get_item_suppliers(item_code):
     """Fetch allowed suppliers for an item (handles variants) with supplier names."""
     try:
