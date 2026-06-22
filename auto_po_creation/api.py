@@ -778,6 +778,34 @@ def create_purchase_orders(material_request, items):
         frappe.throw("Error while creating Purchase Orders. Please check error log.")
 
 
+def clear_supplier_quotation_item_rates(sq):
+    """Remove auto-filled buying rates so users can enter quotation rates manually."""
+    rate_fields = (
+        "rate",
+        "price_list_rate",
+        "base_price_list_rate",
+        "base_rate",
+        "amount",
+        "base_amount",
+        "net_rate",
+        "net_amount",
+        "base_net_rate",
+        "base_net_amount",
+        "discount_percentage",
+        "discount_amount",
+        "last_purchase_rate",
+    )
+
+    for item in sq.items:
+        for field in rate_fields:
+            if item.meta.has_field(field):
+                item.set(field, 0)
+
+    sq.calculate_taxes_and_totals()
+    sq.flags.ignore_permissions = True
+    sq.save(ignore_permissions=True)
+
+
 @frappe.whitelist()
 def create_supplier_quotations(material_request, items):
     """Group MR items by supplier and create Supplier Quotations."""
@@ -877,6 +905,7 @@ def create_supplier_quotations(material_request, items):
             sq.flags.ignore_permissions = True
             sq.flags.ignore_mandatory = True
             sq.insert(ignore_permissions=True)
+            clear_supplier_quotation_item_rates(sq)
             frappe.db.commit()
 
             created.append({
