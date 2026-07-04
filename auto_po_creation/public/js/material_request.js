@@ -457,7 +457,8 @@ frappe.ui.form.on('Material Request', {
                                 item_name: row.item_name,
                                 qty: row.qty,
                                 supplier: supplier,
-                                supplier_name: row.custom_supplier_name || ''
+                                supplier_name: row.custom_supplier_name || '',
+                                material_request_item: row.name
                             });
                         });
     
@@ -558,7 +559,8 @@ function show_po_selection_dialog(frm, table_data) {
             const payload = selected_items.map((r) => ({
                 item_code: r.item_code,
                 qty: r.qty,
-                supplier: r.supplier
+                supplier: r.supplier,
+                material_request_item: r.material_request_item
             }));
 
             frappe.call({

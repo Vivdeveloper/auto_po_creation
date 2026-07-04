@@ -675,31 +675,38 @@ def create_purchase_orders(material_request, items):
         company_abbr = company_doc.abbr
         company_state = company_doc.gstin[:2] if company_doc.gstin else None
 
-        # Map item_code -> MR item details (warehouse, row name, qty, uom, custom fields)
+        # Map MR item details by item_code AND by row name (so a split item keeps each
+        # row's own Std Pkg Qty / No of Unit / qty instead of the last row's values).
         mr_item_map = {}
+        mr_row_map = {}
         for d in mr.items:
             if not d.warehouse:
                 frappe.throw(f"Warehouse missing for Item {d.item_code}")
-            mr_item_map[d.item_code] = {
+            details = {
                 "warehouse": d.warehouse,
                 "mr_item_name": d.name,  # Material Request Item row name
                 "qty": d.qty,
                 "uom": d.uom or d.stock_uom,  # Use UOM from MR item
                 "custom_packing_qty": getattr(d, "custom_packing_qty", None),
-                "custom_total_qty": getattr(d, "custom_total_qty", None)
+                "custom_total_qty": getattr(d, "custom_total_qty", None),
+                "custom_notes": getattr(d, "custom_note", None) or getattr(d, "custom_notes", None)
             }
+            mr_item_map[d.item_code] = details
+            mr_row_map[d.name] = details
 
         # Group items per supplier, skip ones already on a PO
         for item in items:
             item_code = item["item_code"]
             supplier = item["supplier"]
 
+            # Prefer the specific MR row (from the dialog); fall back to item_code.
+            mr_details = mr_row_map.get(item.get("material_request_item")) or mr_item_map.get(item_code)
+            if not mr_details:
+                frappe.throw(f"Item {item_code} not found in Material Request")
+
             existing_po = frappe.get_all(
                 "Purchase Order Item",
-                filters={
-                    "material_request": material_request,
-                    "item_code": item_code
-                },
+                filters={"material_request_item": mr_details["mr_item_name"]},
                 fields=["parent"]
             )
 
@@ -710,9 +717,10 @@ def create_purchase_orders(material_request, items):
                 })
                 continue
 
-            mr_details = mr_item_map.get(item_code)
-            if not mr_details:
-                frappe.throw(f"Item {item_code} not found in Material Request")
+            # Reference the specific Material Request row when the dialog provides it, so an
+            # item split across multiple MR rows creates SEPARATE PO rows (each linked to its
+            # own MR item) instead of hitting "Duplicate row with same Material Request Item".
+            mr_item_name = item.get("material_request_item") or mr_details["mr_item_name"]
 
             po_item = {
                 "item_code": item_code,
@@ -721,16 +729,20 @@ def create_purchase_orders(material_request, items):
                 "warehouse": mr_details["warehouse"],
                 "schedule_date": frappe.utils.nowdate(),
                 "material_request": material_request,
-                "material_request_item": mr_details["mr_item_name"],
+                "material_request_item": mr_item_name,
                 "project": project
             }
 
             # Add custom fields if they exist
             if mr_details["custom_packing_qty"] is not None:
                 po_item["custom_packing_qty"] = mr_details["custom_packing_qty"]
-            
+
             if mr_details["custom_total_qty"] is not None:
                 po_item["custom_total_qty"] = mr_details["custom_total_qty"]
+
+            # Carry the item Notes from the Material Request into the Purchase Order
+            if mr_details.get("custom_notes"):
+                po_item["custom_notes"] = mr_details["custom_notes"]
 
             supplier_items_map[supplier].append(po_item)
 
@@ -827,28 +839,34 @@ def create_supplier_quotations(material_request, items):
         company_state = company_doc.gstin[:2] if company_doc.gstin else None
 
         mr_item_map = {}
+        mr_row_map = {}
         for d in mr.items:
             if not d.warehouse:
                 frappe.throw(f"Warehouse missing for Item {d.item_code}")
-            mr_item_map[d.item_code] = {
+            details = {
                 "warehouse": d.warehouse,
                 "mr_item_name": d.name,
                 "qty": d.qty,
                 "uom": d.uom or d.stock_uom,
                 "custom_packing_qty": getattr(d, "custom_packing_qty", None),
                 "custom_total_qty": getattr(d, "custom_total_qty", None),
+                "custom_notes": getattr(d, "custom_note", None) or getattr(d, "custom_notes", None),
             }
+            mr_item_map[d.item_code] = details
+            mr_row_map[d.name] = details
 
         for item in items:
             item_code = item["item_code"]
             supplier = item["supplier"]
 
+            # Prefer the specific MR row (from the dialog); fall back to item_code.
+            mr_details = mr_row_map.get(item.get("material_request_item")) or mr_item_map.get(item_code)
+            if not mr_details:
+                frappe.throw(f"Item {item_code} not found in Material Request")
+
             existing_sq = frappe.get_all(
                 "Supplier Quotation Item",
-                filters={
-                    "material_request": material_request,
-                    "item_code": item_code,
-                },
+                filters={"material_request_item": mr_details["mr_item_name"]},
                 fields=["parent"],
             )
 
@@ -859,17 +877,15 @@ def create_supplier_quotations(material_request, items):
                 })
                 continue
 
-            mr_details = mr_item_map.get(item_code)
-            if not mr_details:
-                frappe.throw(f"Item {item_code} not found in Material Request")
-
             sq_item = {
                 "item_code": item_code,
                 "qty": item.get("qty") or mr_details["qty"],
                 "uom": mr_details["uom"],
                 "warehouse": mr_details["warehouse"],
                 "material_request": material_request,
-                "material_request_item": mr_details["mr_item_name"],
+                # Link to the specific MR row (from the dialog) so a split item makes
+                # separate SQ rows instead of duplicating one Material Request Item.
+                "material_request_item": item.get("material_request_item") or mr_details["mr_item_name"],
                 "project": project,
             }
 
@@ -878,6 +894,10 @@ def create_supplier_quotations(material_request, items):
 
             if mr_details["custom_total_qty"] is not None:
                 sq_item["custom_total_qty"] = mr_details["custom_total_qty"]
+
+            # Carry the item Notes from the Material Request into the Supplier Quotation
+            if mr_details.get("custom_notes"):
+                sq_item["custom_notes"] = mr_details["custom_notes"]
 
             supplier_items_map[supplier].append(sq_item)
 
